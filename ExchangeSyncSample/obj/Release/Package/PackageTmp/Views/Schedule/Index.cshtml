@@ -1,0 +1,319 @@
+﻿@{
+    Layout = null;
+}
+
+<!DOCTYPE html>
+
+<html>
+<head>
+    <meta name="viewport" content="width=device-width" />
+    <title>Index</title>
+    <link href="~/Content/Site.css" rel="stylesheet" type="text/css" />
+    <link href="~/Content/themes/base/jquery.ui.all.css" rel="stylesheet" type="text/css" />
+    <script src="~/Scripts/jquery-2.0.2.min.js"></script>
+    <script src="~/Scripts/jquery-ui-1.10.3.min.js"></script>
+    <script src="~/Scripts/jquery.signalR-1.1.2.min.js"></script>
+    <script src="~/signalr/hubs"></script>
+</head>
+<body>
+    <div>
+<script type="text/javascript">
+    //var socket = null;
+    var syncHub = null;
+
+    function getCalenderHtml(thisMonth) {
+        var resHtml = '<table class="calendar">\n';
+        var nextMonth = new Date(thisMonth.getFullYear(), thisMonth.getMonth() + 1, 1);
+
+        // ヘッダーを表示
+        resHtml += '<tr><th style="color:#f00;">日</th><th>月</th><th>火</th><th>水</th><th>木</th><th>金</th><th style="color:#00f;">土</th></tr>\n';
+
+        // 1 日前の空のセルを表示
+        resHtml += '<tr>';
+        for (i = 1; i < thisMonth.getDay() + 1; i++) {
+            resHtml += '<td></td>';
+        }
+
+        var indexDate = new Date(thisMonth);
+        indexDate.setDate(1);
+        for (i = 1; indexDate < nextMonth; i++) {
+            if (indexDate.getDay() < 6) {
+                // 土曜でなければそのまま
+                resHtml += '<td nowrap>' + i + '&nbsp;&nbsp;<a href="#" class="add_link" id="day' + i + '"><img src="../../Content/plus.png" width="20px" alt="予定を追加" border="0" /></a><br /><div id="day' + i + '_valarea"></div></td>';
+            }
+            else if (indexDate.setDate(i + 1) < nextMonth) {
+                // 土曜で、かつその月なら次の行へ
+                resHtml += '<td nowrap>' + i + '&nbsp;&nbsp;<a href="#" class="add_link" id="day' + i + '"><img src="../../Content/plus.png" width="20px" alt="予定を追加" border="0" /></a><br /><div id="day' + i + '_valarea"></div></td></tr>\n<tr>';
+            } else {
+                // 土曜で、最終日ならそのまま
+                resHtml += '<td nowrap>' + i + '&nbsp;&nbsp;<a href="#" class="add_link" id="day' + i + '"><img src="../../Content/plus.png" width="20px" alt="予定を追加" border="0" /></a><br /><div id="day' + i + '_valarea"></div></td>';
+            }
+            indexDate.setDate(i + 1);
+        }
+
+        // 最終日以降の空のセルを表示
+        for (j = indexDate.getDay(); j <= 6; j++)
+            resHtml += '<td></td>';
+        resHtml += '</tr>\n</table>';
+
+        return resHtml;
+    }
+
+    function addSchedule(day, title, starthour, color) {
+        var item = $('#' + day + '_valarea');
+        item.html(item.html() + '<span style="background-color:' + color + '">' + starthour + ':00&nbsp;' + title + '</span><br />');
+    }
+
+    function resetAddScheduleDlg() {
+        $('#add_title').val('');
+        $('.schtime').val('00');
+        $('#scheduletype_event').attr('checked', true);
+        $('.schtime').attr('disabled', true);
+        $('#selectedItem').val('');
+    }
+
+    function waitDialog(status, message) {
+        if (status == 'open') {
+            $('#waitmessage').html(message);
+        }
+        $('#wait_dialog').dialog(status);
+    }
+
+    function resetConnection() {
+        syncHub.server.disconnectExchange();
+    }
+
+    function openConnection() {
+        waitDialog('open', 'Exchange Online と同期しています...');
+        syncHub.server.connectExchange(
+            $('#ml_address').val(),
+            $('#ml_password').val());
+    }
+
+    $(document).ready(function () {
+        $('#settings').accordion({ header: 'h3' });
+
+        $('#add_dialog').dialog({
+            autoOpen: false,
+            modal: true,
+            width: 600,
+            buttons: {
+                '追加': function () {
+                    $(this).dialog('close');
+                    addSchedule($('#selectedItem').val(), $('#add_title').val(), $('#time1').val(), "transparent");
+                    resetAddScheduleDlg();
+                },
+                'キャンセル': function () {
+                    $(this).dialog('close');
+                    resetAddScheduleDlg();
+                }
+            }
+        });
+
+        $('#wait_dialog').dialog({
+            autoOpen: false,
+            modal: true,
+            width: 600
+        });
+
+        $('#credential_dialog').dialog({
+            autoOpen: false,
+            modal: true,
+            width: 600,
+            buttons: {
+                '同期': function () {
+                    $(this).dialog('close');
+                    openConnection();
+                },
+                'キャンセル': function () {
+                    $(this).dialog('close');
+                    $('#sync_o365').attr('checked', false);
+                    $('#ml_address').val('');
+                    $('#ml_password').val('');
+                }
+            }
+        });
+
+        // setup signalr client (signalR)
+        syncHub = $.connection.syncHub;
+        syncHub.client.notifyEvent = function (msgtype, msgbody) {
+            var item = JSON.parse(msgbody);
+            if (msgtype == 'Ready') {
+                waitDialog('close', null);
+                // データを取得してカレンダーに設定 !
+                waitDialog('open', 'カレンダー データを取得しています...');
+                $.ajax({
+                    url: '../../Schedule/ThisMonthItems?MailAddress=' + encodeURIComponent(item.MailAddress) + '&Password=' + encodeURIComponent(item.Password) + '&Url=' + encodeURIComponent(item.ServerUrl),
+                    type: 'GET',
+                    dataType: 'json',
+                    timeout: 90000,
+                    error: function (httpRequest, textStatus, errorThrown) {
+                        waitDialog('close', null);
+                        resetConnection();
+                        alert('初期データの取得でエラーが発生しました.(エラー ステータス : ' + textStatus + ')');
+                    },
+                    success: function (result) {
+                        for (var i = 0; i < result.length; i++) {
+                            addSchedule('day' + result[i].StartDate, result[i].Subject, result[i].StartHour, "Orange");
+                        }
+                        waitDialog('close', null);
+                    }
+                });
+            }
+            else if (msgtype == 'Created') {
+                addSchedule('day' + item.StartDate, item.Subject, item.StartHour, 'Orange');
+            }
+            else if (msgtype == 'Exception') {
+                waitDialog('close', null);
+                alert(item.Message);
+            }
+            else {
+                waitDialog('close', null);
+                alert('このアプリケーションでサポートされていないメッセージを受信しました. (msgtype:' + msgtype + ')');
+            }
+        };
+
+        // connect to hub (signalR)
+        $.connection.hub.start()
+          .done(function () {
+              var nowDate = new Date();
+              var firstDate = new Date(nowDate.getFullYear(), nowDate.getMonth(), 1)
+              $("#calendarArea").html(getCalenderHtml(firstDate));
+              resetAddScheduleDlg();
+
+              $('.add_link').click(function () {
+                  $('#selectedItem').val($(this).attr('id'));
+                  $('#add_dialog').dialog('open');
+                  return false;
+              });
+
+              $('#sync_o365').click(function () {
+                  if ($(this).prop('checked')) {
+                      $('#credential_dialog').dialog('open');
+                  }
+                  else {
+                      resetConnection();
+                  }
+                  return true;
+              });
+
+              $('.scheduletype').click(function () {
+                  if ($(this).attr('id') == 'scheduletype_event') {
+                      $('.schtime').val('00');
+                      $('.schtime').attr('disabled', true);
+                  }
+                  else {
+                      $('.schtime').attr('disabled', false);
+                  }
+                  return true;
+              });
+
+              $('.notimple').click(function () {
+                  alert('実装されてません . . . (NotImplementedException)');
+                  return false;
+              });
+
+              setInterval(function(){
+                  syncHub.server.ping();
+              }, 60000);
+          });
+    })
+
+    //$(window).bind("beforeunload", function (e) {
+    //    resetConnection();
+    //});
+
+</script>
+
+<h2>
+<img src="../../Content/cal.png" width="50px" alt="カレンダー" />
+<img src="../../Content/left.png" width="20px" alt="前の月へ" />
+    @ViewData["Title"]
+<img src="../../Content/right.png" width="20px" alt="次の月へ" />
+</h2>
+
+<div id="settings">
+	<div>
+		<h3><a href="#">テーマの設定</a></h3>
+        <div>
+            <table>
+                <tr>
+                    <td><input type="radio" class="notimple" name="cal_theme" value="a" checked>標準</td>
+                    <td><input type="radio" class="notimple" name="cal_theme" value="b">カラフル</td>
+                    <td><input type="radio" class="notimple" name="cal_theme" value="c">ダーク</td>
+                </tr>
+                <tr>
+                    <td><input type="radio" class="notimple" name="cal_theme" value="d">ビジネス</td>
+                    <td><input type="radio" class="notimple" name="cal_theme" value="e">ファンシー</td>
+                    <td><input type="radio" class="notimple" name="cal_theme" value="f">チャイルド</td>
+                </tr>
+            </table>
+        </div>
+	</div>
+	<div>
+		<h3><a href="#">同期の設定</a></h3>
+		<div>
+        <input type="checkbox" id="sync_o365" />Exchange Online (Office 365)<br />
+        <input type="checkbox" id="sync_google" class="notimple" />Google Calendar<br />
+        <input type="checkbox" id="sync_yahoo" class="notimple" />Yahoo! Calendar<br />
+        <input type="checkbox" id="sync_hotmail" class="notimple" />Hotmail Calendar<br />
+        </div>
+	</div>
+	<div>
+		<h3><a href="#">その他のオプション</a></h3>
+        <div>
+        実装されてません . . . (NotImplementedException)
+        </div>
+	</div>
+</div>
+
+<input type="hidden" id="selectedItem" value="" />
+
+<div id="add_dialog" title="予定を追加">
+<table>
+    <tr>
+        <td>タイトル</td>
+        <td><input type="text" id="add_title" /></td>
+    </tr>
+    <tr>
+        <td>時間</td>
+        <td>
+          <input type="text" class="schtime" id="time1" />時
+          <input type="text" class="schtime" id="time2" />分&nbsp;～&nbsp;
+          <input type="text" class="schtime" id="time3" />時
+          <input type="text" class="schtime" id="time4" />分
+        </td>
+    </tr>
+    <tr>
+        <td>種類</td>
+        <td>
+          <input type="radio" class="scheduletype" name="sch_type" id="scheduletype_event" value="e">記念日/イベント
+          <input type="radio" class="scheduletype" name="sch_type" id="scheduletype_schedule" value="s">予定
+        </td>
+    </tr>
+</table>
+</div>
+
+<div id="credential_dialog" title="メールアドレス / パスワードを設定">
+<table>
+    <tr>
+        <td>メール アドレス</td>
+        <td><input type="text" id="ml_address" /></td>
+    </tr>
+    <tr>
+        <td>パスワード</td>
+        <td><input type="password" id="ml_password" /></td>
+    </tr>
+</table>
+</div>
+
+<div id="wait_dialog" title="しばらくお待ちください ...">
+  <img src="../../Content/ppsd-throbber.gif" alt="Please wait ..." />
+  <span id="waitmessage"></span>
+</div>
+
+<p id="calendarArea">
+</p>
+
+</body>
+</html>
