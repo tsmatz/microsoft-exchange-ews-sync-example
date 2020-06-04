@@ -27,23 +27,26 @@ namespace ExchangeSyncSample
             }
         }
 
-        public void ConnectExchange(string userId, string password)
+        //public void ConnectExchange(string userId, string password)
+        public void ConnectExchange(string oauthToken)
         {
             try
             {
                 ExchangeService sv = null;
                 StreamingSubscriptionConnection subcon = null;
 
-                // Exchange Online に接続 (今回はデモなので、Address は決めうち !)
+                // Exchange Online に接続
                 //ExchangeVersion ver = new ExchangeVersion();
                 //ver = ExchangeVersion.Exchange2010_SP1;
                 //sv = new ExchangeService(ver, TimeZoneInfo.FindSystemTimeZoneById("Tokyo Standard Time"));
                 sv = new ExchangeService(TimeZoneInfo.FindSystemTimeZoneById("Tokyo Standard Time"));
                 //sv.TraceEnabled = true; // デバッグ用
-                sv.Credentials = new System.Net.NetworkCredential(
-                    userId, password);
-                sv.EnableScpLookup = false;
-                sv.AutodiscoverUrl(userId, exchange_AutodiscoverCallback);
+                //sv.Credentials = new System.Net.NetworkCredential(
+                //    userId, password);
+                //sv.EnableScpLookup = false;
+                //sv.AutodiscoverUrl(userId, exchange_AutodiscoverCallback);
+                sv.Credentials = new OAuthCredentials(oauthToken);
+                sv.Url = new Uri(@"https://outlook.office365.com/EWS/Exchange.asmx");
 
                 // Streaming Notification の開始 (Windows Azure の制約から 1 分ごとに貼り直し)
                 StreamingSubscription sub = sv.SubscribeToStreamingNotifications(
@@ -66,12 +69,7 @@ namespace ExchangeSyncSample
                     });
 
                 // 準備完了の送信 !
-                JObject jsonObj = new JObject();
-                jsonObj["MailAddress"] = new JValue(userId);
-                jsonObj["Password"] = new JValue(password);
-                jsonObj["ServerUrl"] = new JValue(sv.Url.ToString());
-                //this.SendMessage(jsonObj.ToString());
-                this.Clients.Caller.notifyEvent("Ready", jsonObj.ToString());
+                this.Clients.Caller.notifyEvent("Ready");
             }
             catch (Exception exp)
             {
@@ -79,6 +77,12 @@ namespace ExchangeSyncSample
                 jsonObj["Message"] = new JValue(exp.Message);
                 this.Clients.Caller.notifyEvent("Exception", jsonObj.ToString());
             }
+        }
+
+        public override System.Threading.Tasks.Task OnDisconnected()
+        {
+            this.DisconnectExchange();
+            return base.OnDisconnected();
         }
 
         public void DisconnectExchange()
@@ -93,8 +97,9 @@ namespace ExchangeSyncSample
 
         private void CleanUpExchangeClients()
         {
+            // When idle in 10 minutes, the connection is removed.
             var removeKeys = from c in exchangeClients
-                             where c.Value.LastUpdate < DateTime.Now.AddMinutes(-5)
+                             where c.Value.LastUpdate < DateTime.Now.AddMinutes(-10)
                              select c.Key;
             foreach(var key in removeKeys)
             {
